@@ -13,8 +13,15 @@ const downloadBtn = document.getElementById('downloadBtn');
 const statusInfo = document.getElementById('statusInfo');
 
 let selectedFile = null;
+let currentDownloadUrl = null;
 
-// Drag & drop functionality
+// ==================== INITIALIZATION ====================
+window.addEventListener('load', () => {
+    // Initialize percentage display
+    percentageValue.textContent = compressionSlider.value;
+});
+
+// ==================== DRAG & DROP FUNCTIONALITY ====================
 dropArea.addEventListener('click', () => fileInput.click());
 
 dropArea.addEventListener('dragover', (e) => {
@@ -40,7 +47,8 @@ fileInput.addEventListener('change', (e) => {
     }
 });
 
-function handleFile(file) {
+// ==================== FILE HANDLING ====================
+async function handleFile(file) {
     if (!file.name.toLowerCase().endsWith('.ply')) {
         showStatus('Please select a .ply file', 'error');
         return;
@@ -54,6 +62,12 @@ function handleFile(file) {
     downloadBtn.style.display = 'none';
     progressContainer.style.display = 'none';
 
+    // Clean up any previous download URL
+    if (currentDownloadUrl) {
+        window.URL.revokeObjectURL(currentDownloadUrl);
+        currentDownloadUrl = null;
+    }
+
     showStatus('File loaded successfully. Adjust compression slider and click Compress.', 'info');
 }
 
@@ -65,14 +79,17 @@ function formatFileSize(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-// Update percentage display
+// ==================== SLIDER HANDLER ====================
 compressionSlider.addEventListener('input', () => {
     percentageValue.textContent = compressionSlider.value;
 });
 
-// Compress button click
+// ==================== COMPRESSION HANDLER ====================
 compressBtn.addEventListener('click', async () => {
     if (!selectedFile) return;
+
+    // Cleanup previous session
+    await cleanupSession();
 
     compressBtn.disabled = true;
     progressContainer.style.display = 'block';
@@ -117,6 +134,8 @@ compressBtn.addEventListener('click', async () => {
 
                     // Create download link
                     const url = window.URL.createObjectURL(blob);
+                    currentDownloadUrl = url;
+
                     downloadBtn.onclick = () => {
                         const a = document.createElement('a');
                         a.href = url;
@@ -124,7 +143,15 @@ compressBtn.addEventListener('click', async () => {
                         document.body.appendChild(a);
                         a.click();
                         document.body.removeChild(a);
-                        window.URL.revokeObjectURL(url);
+
+                        // Clean up server files after successful download
+                        setTimeout(() => {
+                            fetch('/cleanup', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                keepalive: true
+                            }).catch(e => console.log('Cleanup optional:', e));
+                        }, 1000);
                     };
 
                     downloadBtn.style.display = 'block';
@@ -148,11 +175,46 @@ compressBtn.addEventListener('click', async () => {
     }
 });
 
+// ==================== CLEANUP FUNCTIONS ====================
+async function cleanupSession() {
+    try {
+        // Clean up any previous download URL
+        if (currentDownloadUrl) {
+            window.URL.revokeObjectURL(currentDownloadUrl);
+            currentDownloadUrl = null;
+        }
+
+        // Call server cleanup endpoint
+        await fetch('/cleanup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+    } catch (e) {
+        console.log('Cleanup optional:', e);
+    }
+}
+
+// Session cleanup on page unload
+window.addEventListener('beforeunload', async () => {
+    try {
+        await fetch('/cleanup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            keepalive: true
+        });
+    } catch (e) {
+        // Ignore errors during unload
+    }
+});
+
+// Cleanup on page hide (for mobile browsers)
+window.addEventListener('pagehide', () => {
+    cleanupSession().catch(() => { });
+});
+
+// ==================== STATUS DISPLAY ====================
 function showStatus(message, type) {
     statusInfo.textContent = message;
     statusInfo.className = 'status ' + type;
     statusInfo.style.display = message ? 'block' : 'none';
 }
-
-// Initialize percentage display
-percentageValue.textContent = compressionSlider.value;
