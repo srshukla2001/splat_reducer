@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: ply-compression-tool
+    env: python
+    region: singapore  # or singapore, frankfurt, ohio, etc.
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn server:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+    disk:
+      name: tmp
+      mountPath: /tmp
+      sizeGB: 1
+    autoDeploy: true

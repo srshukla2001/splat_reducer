@@ -7,13 +7,34 @@ from flask_cors import CORS
 import uuid
 import threading
 import time
+import atexit
+import shutil
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 CORS(app)
 
+# Create uploads directory
+UPLOAD_DIR = 'uploads'
+RESULT_DIR = 'results'
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(RESULT_DIR, exist_ok=True)
+
+# Cleanup function
+def cleanup_dirs():
+    """Clean up temporary files on exit"""
+    try:
+        if os.path.exists(UPLOAD_DIR):
+            shutil.rmtree(UPLOAD_DIR)
+        if os.path.exists(RESULT_DIR):
+            shutil.rmtree(RESULT_DIR)
+    except:
+        pass
+
+atexit.register(cleanup_dirs)
+
 # Progress tracking
 progress_data = {
-    'status': 'idle',  # idle, processing, completed, error
+    'status': 'idle',
     'progress': 0,
     'message': ''
 }
@@ -53,7 +74,7 @@ def compress_ply_task(input_path, keep_ratio, task_id):
         vertex_el = PlyElement.describe(reduced, 'vertex')
         
         # Save to unique file
-        result_file_path = f"compressed_{task_id}.ply"
+        result_file_path = os.path.join(RESULT_DIR, f"compressed_{task_id}.ply")
         PlyData([vertex_el], text=ply.text).write(result_file_path)
         
         progress_data['progress'] = 100
@@ -65,10 +86,13 @@ def compress_ply_task(input_path, keep_ratio, task_id):
         # Clean up input file after 5 minutes
         def cleanup():
             time.sleep(300)
-            if os.path.exists(input_path):
-                os.remove(input_path)
-            if os.path.exists(result_file_path):
-                os.remove(result_file_path)
+            try:
+                if os.path.exists(input_path):
+                    os.remove(input_path)
+                if os.path.exists(result_file_path):
+                    os.remove(result_file_path)
+            except:
+                pass
         
         threading.Thread(target=cleanup, daemon=True).start()
         
@@ -101,6 +125,9 @@ def compress():
     if not file.filename.lower().endswith('.ply'):
         return jsonify({'error': 'File must be a .ply file'}), 400
     
+    if file.content_length and file.content_length > 100 * 1024 * 1024:  # 100MB limit
+        return jsonify({'error': 'File too large. Max 100MB.'}), 400
+    
     # Reset progress
     progress_data = {
         'status': 'idle',
@@ -110,7 +137,7 @@ def compress():
     
     # Save uploaded file
     task_id = str(uuid.uuid4())[:8]
-    input_path = f"upload_{task_id}.ply"
+    input_path = os.path.join(UPLOAD_DIR, f"upload_{task_id}.ply")
     file.save(input_path)
     
     # Start compression in background thread
@@ -146,15 +173,11 @@ def get_result():
         mimetype='application/octet-stream'
     )
 
+@app.route('/health')
+def health_check():
+    """Health check endpoint for Render"""
+    return jsonify({'status': 'healthy'}), 200
+
 if __name__ == '__main__':
-    # Create required directories
-    os.makedirs('uploads', exist_ok=True)
-    os.makedirs('results', exist_ok=True)
-    
-    print("Starting PLY Compression Server...")
-    print("Open http://localhost:5000 in your browser")
-    print("\nRequirements:")
-    print("pip install flask flask-cors numpy plyfile")
-    print("\nServer running on http://localhost:5000")
-    
-    app.run(debug=True, port=5000, host='0.0.0.0')
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
